@@ -16,7 +16,7 @@ struct Command {
 }
 
 impl Command {
-    fn execute(&self, cwd: &PathBuf, input: Option<Vec<u8>>) -> Result<Option<Vec<u8>>> {
+    fn execute(&self, cwd: &PathBuf, input: Option<String>) -> Result<Option<String>> {
         let mut cmd = std::process::Command::new(&self.bin)
             .args(&self.args)
             .current_dir(cwd)
@@ -27,12 +27,13 @@ impl Command {
         // If we have input, write it to stdin
         if let Some(input) = input {
             if let Some(mut stdin) = cmd.stdin.take() {
-                stdin.write_all(&input)?;
+                stdin.write_all(input.as_bytes())?;
             }
         }
 
         let output = cmd.wait_with_output()?;
-        Ok(Some(output.stdout))
+        let output = String::from_utf8(output.stdout)?;
+        Ok(Some(output))
     }
 }
 
@@ -57,7 +58,7 @@ enum CommandChain {
 }
 
 fn parse_command(cmd1: &str) -> Result<Command> {
-    let parts: Vec<String> = cmd1.split_whitespace().map(String::from).collect();
+    let parts: Vec<String> = cmd1.trim().split_whitespace().map(String::from).collect();
 
     let (cmd, args) = match parts.split_first() {
         Some(list) => list,
@@ -118,7 +119,7 @@ impl CommandRunner {
     /// Execute command and return output
     fn run(&mut self, chains: Vec<CommandChain>) -> Result<()> {
         for chain in chains {
-            let output: Result<Option<_>> = match chain {
+            let output: Result<Option<String>> = match chain {
                 CommandChain::Command(command) => {
                     self.history.push(command.to_string());
 
@@ -156,8 +157,10 @@ impl CommandRunner {
                 }
             };
 
-            if let Ok(Some(output)) = output {
-                print!("{}", String::from_utf8(output)?);
+            match output {
+                Ok(Some(output)) => print!("{output}"),
+                Ok(None) => (),
+                Err(_) => (),
             }
         }
         Ok(())
@@ -169,7 +172,13 @@ fn main() -> Result<()> {
 
     loop {
         show_prompt()?;
-        let Ok(commands) = parse_cmds() else { continue };
+
+        let commands = match parse_cmds() {
+            Ok(cmds) => cmds,
+            // Errors are fine here; just read again
+            Err(_) => continue,
+        };
+
         runner.run(commands)?;
     }
 }
